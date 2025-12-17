@@ -4,12 +4,14 @@
 # This script is used to build and run the gvsoc simulator with a test binary #
 ###############################################################################
 
-APP_DIR="/home/lelez/git/palloy/pulp-sdk/applications/MobileNetV1/"
+APP_DIR="./pulp-sdk/applications/MobileNetV1/"
 NUM_CLUSTER_CORES=4
 
 CONFIG="palloy.sh"
 TARGET="palloy"
 VENV_DIR="./.venv/"
+
+export TRACE_FILE="$(dirname "$(readlink -f "$0")")/traces.log"
 
 ###############################################################################
 
@@ -28,11 +30,14 @@ make TARGETS=$TARGET build && \
 
 # Go into app directory
 cd $APP_DIR && \
-make clean && \
-make all CORE=$NUM_CLUSTER_CORES && \
+make all -B CORE=$NUM_CLUSTER_CORES && \
 
 # Run GVSoC
 echo "Running GVSoC..." && \
 make run && \
 
 echo "Simulation ended."
+
+# Shrink traces file to last 10000 lines
+tail -n 10000 $TRACE_FILE > ${TRACE_FILE}.tmp && mv ${TRACE_FILE}.tmp $TRACE_FILE && \
+echo "Traces saved to $TRACE_FILE"
