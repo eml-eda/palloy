@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 import json
+import shutil
 
 # ANSI color codes
 class Colors:
@@ -24,39 +25,142 @@ class Colors:
     RESET = '\033[0m'
 
 
+class PalloyConfig:
+    """Class to manage Palloy simulation configuration parameters"""
+    
+    def __init__(self, 
+                 config_file: str = "palloy_config.json",
+                 cluster_base_file: str = "./gvcuck/pulp/pulp/chips/pulp_open/cluster.json",
+                 soc_base_file: str = "./gvcuck/pulp/pulp/chips/pulp_open/soc.json"):
+        """
+        Initialize configuration manager
+        
+        Args:
+            config_file: Path to the palloy configuration file
+            cluster_base_file: Path to baseline cluster config
+            soc_base_file: Path to baseline SoC config
+        """
+        self.config_file = Path(config_file)
+        self.cluster_base_file = Path(cluster_base_file)
+        self.soc_base_file = Path(soc_base_file)
+        
+        # Default parameters
+        self.params = {
+            "num_cluster_cores": 8,
+            "l1_size_kb": 64,
+            "l2_size_kb": 1600,
+            "l2_num_banks": 4,
+            "workload_path": "./pulp-sdk/tests/hello/"
+        }
+        
+        # Load configuration if exists
+        self._load_config()
+    
+    def _load_config(self):
+        """Load configuration from file if it exists"""
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r') as f:
+                    loaded_params = json.load(f)
+                    # Update only existing keys, keep defaults for missing ones
+                    for key, value in loaded_params.items():
+                        if key in self.params:
+                            self.params[key] = value
+                print(f"{Colors.GREEN}✓ Loaded configuration from {self.config_file}{Colors.RESET}")
+            except Exception as e:
+                print(f"{Colors.YELLOW}⚠ Warning: Could not load config file: {e}{Colors.RESET}")
+                print(f"{Colors.YELLOW}  Using default parameters{Colors.RESET}")
+    
+    def update(self, **kwargs):
+        """Update configuration parameters"""
+        for key, value in kwargs.items():
+            if key in self.params and value is not None:
+                self.params[key] = value
+    
+    def get(self, key: str, default=None):
+        """Get a configuration parameter"""
+        return self.params.get(key, default)
+    
+    def print_config(self):
+        """Print current configuration"""
+        print(f"\n{Colors.CYAN}{Colors.BOLD}Current Configuration:{Colors.RESET}")
+        print(f"  Workload:         {self.params['workload_path']}")
+        print(f"  Cluster Cores:    {self.params['num_cluster_cores']}")
+        print(f"  L1 Size:          {self.params['l1_size_kb']} KB")
+        print(f"  L2 Size:          {self.params['l2_size_kb']} KB")
+        print(f"  L2 Banks:         {self.params['l2_num_banks']}")
+
+
 class PalloySimulator:
     """Main class for managing GVSoC simulations"""
     
     def __init__(self, 
-                 workload_path: str,
-                 num_cluster_cores: int = 4,
+                 workload_path: Optional[str] = None,
                  config: str = "palloy.sh",
                  target: str = "palloy",
                  venv_dir: str = "./.venv/",
                  gvsoc_dir: str = "./gvcuck/",
                  sdk_dir: str = "./pulp-sdk/",
-                 trace_file: str = "./traces.log"):
+                 trace_file: str = "./traces.log",
+                 cluster_config_file: str = "./gvcuck/pulp/pulp/chips/pulp_open/cluster.new.json",
+                 soc_config_file: str = "./gvcuck/pulp/pulp/chips/pulp_open/soc.new.json",
+                 num_cluster_cores: Optional[int] = None,
+                 l1_size_kb: Optional[int] = None,
+                 l2_size_kb: Optional[int] = None,
+                 l2_num_banks: Optional[int] = None,
+                 palloy_config_file: str = "palloy_config.json"):
         """
         Initialize the Palloy simulator
         
         Args:
-            workload_path: Path to the application directory
-            num_cluster_cores: Number of cluster cores to use
+            workload_path: Path to the application directory (None = use from config)
             config: Configuration file name (in pulp-sdk/configs/)
             target: Target name for GVSoC build
             venv_dir: Path to virtual environment
             gvsoc_dir: Path to GVSoC directory
             sdk_dir: Path to PULP SDK directory
             trace_file: Path to trace output file
+            cluster_config_file: Path to cluster config JSON
+            soc_config_file: Path to SoC config JSON
+            num_cluster_cores: Number of cluster cores to use (None = use from config)
+            l1_size_kb: L1 memory size in KB (None = use from config)
+            l2_size_kb: L2 memory size in KB (None = use from config)
+            l2_num_banks: Number of L2 banks (None = use from config)
+            palloy_config_file: Path to palloy configuration file
         """
-        self.workload_path = Path(workload_path).resolve()
-        self.num_cluster_cores = num_cluster_cores
+        # Initialize configuration manager
+        cluster_base = Path(cluster_config_file).parent / "cluster.json"
+        soc_base = Path(soc_config_file).parent / "soc.json"
+        self.palloy_config = PalloyConfig(palloy_config_file, cluster_base, soc_base)
+        
+        # Update config with provided parameters
+        self.palloy_config.update(
+            workload_path=workload_path,
+            num_cluster_cores=num_cluster_cores,
+            l1_size_kb=l1_size_kb,
+            l2_size_kb=l2_size_kb,
+            l2_num_banks=l2_num_banks
+        )
+        
+        # Set instance variables from config
+        self.workload_path = Path(self.palloy_config.get('workload_path')).resolve()
+        self.num_cluster_cores = self.palloy_config.get('num_cluster_cores')
+        self.l1_size_kb = self.palloy_config.get('l1_size_kb')
+        self.l2_size_kb = self.palloy_config.get('l2_size_kb')
+        self.l2_num_banks = self.palloy_config.get('l2_num_banks')
+        
         self.config = config
         self.target = target
         self.venv_dir = Path(venv_dir).resolve()
         self.gvsoc_dir = Path(gvsoc_dir).resolve()
         self.sdk_dir = Path(sdk_dir).resolve()
         self.trace_file = Path(trace_file).resolve()
+        self.cluster_config_file = Path(cluster_config_file).resolve()
+        self.soc_config_file = Path(soc_config_file).resolve()
+        
+        # Base configuration files
+        self.cluster_base_file = cluster_base
+        self.soc_base_file = soc_base
         
         # Store original working directory
         self.original_cwd = Path.cwd()
@@ -64,24 +168,105 @@ class PalloySimulator:
         # Results storage
         self.last_results: Dict[str, Any] = {}
         
-    def set_params(self, num_cluster_cores: Optional[int] = None, 
-                   workload_path: Optional[str] = None):
+    def _update_cluster_config(self, cores_per_cluster: int, l1_size_kb: int) -> bool:
         """
-        Change simulation parameters
+        Update cluster configuration JSON file
+        Reads from baseline file and writes to .new.json
         
         Args:
-            num_cluster_cores: Number of cluster cores
-            workload_path: Path to workload/application
+            cores_per_cluster: Number of cores per cluster
+            l1_size_kb: L1 memory size in KB
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Read from baseline file
+            with open(self.cluster_base_file, 'r') as f:
+                config = json.load(f)
+            
+            # Update num cores, +1 due to the control core
+            config["nb_pe"] = cores_per_cluster + 1
+            config["icache"]["config"]["nb_cores"] = cores_per_cluster + 1
+            config["peripherals"]["event_unit"]["config"]["nb_core"] = cores_per_cluster + 1
+            # TODO: check if this is needed
+            #config["peripherals"]["event_unit"]["config"]["properties"]["barriers"]["nb_barriers"] = cores_per_cluster + 1
+
+            # Update L1 size as hex string
+            l1_size_bytes = l1_size_kb * 1024
+            config["l1"]["mapping"]["size"] = f"0x{l1_size_bytes:08x}"
+
+            # Write to .new.json file
+            with open(self.cluster_config_file, 'w') as f:
+                json.dump(config, f, indent=4)
+            return True
+        except Exception as e:
+            print(f"{Colors.RED}✗ Error updating cluster config: {e}{Colors.RESET}")
+            return False
+
+    def _update_soc_config(self, l2_size_kb: int, l2_num_banks: int) -> bool:
+        """
+        Update SoC configuration JSON file
+        Reads from baseline file and writes to .new.json
+        
+        Args:
+            l2_size_kb: L2 memory size in KB
+            l2_num_banks: Number of L2 banks
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Read from baseline file
+            with open(self.soc_base_file, 'r') as f:
+                config = json.load(f)
+            
+            # Update L2 sizes as hex strings
+            l2_size_bytes = l2_size_kb * 1024
+            l2_shared_size_bytes = l2_size_bytes - (0x00008000 * 2)  # 2 banks of 32kB for L2 priv
+            config["l2"]["size"] = f"0x{l2_size_bytes:08x}"
+            config["l2"]["shared"]["mapping"]["size"] = f"0x{l2_shared_size_bytes:08x}"
+            config["l2"]["shared"]["nb_banks"] = l2_num_banks
+
+            # Write to .new.json file
+            with open(self.soc_config_file, 'w') as f:
+                json.dump(config, f, indent=4)
+            return True
+        except Exception as e:
+            print(f"{Colors.RED}✗ Error updating SoC config: {e}{Colors.RESET}")
+            return False
+        
+    def set_params(self) -> bool:
+        """
+        Update configuration files based on current parameters from palloy_config
+        Reads parameters from palloy_config.json if not already set
+        
+        Returns:
+            True if successful, False otherwise
         """
         
-        # TODO: params are not actually changed as of now
-        if num_cluster_cores is not None:
-            self.num_cluster_cores = num_cluster_cores
-            print(f"{Colors.GREEN}✓ Updated cluster cores: {self.num_cluster_cores}{Colors.RESET}")
-            
-        if workload_path is not None:
-            self.workload_path = Path(workload_path).resolve()
-            print(f"{Colors.GREEN}✓ Updated workload path: {self.workload_path}{Colors.RESET}")
+        # Get parameters from config (use current values if already set)
+        self.num_cluster_cores = self.palloy_config.get('num_cluster_cores', self.num_cluster_cores)
+        self.l1_size_kb = self.palloy_config.get('l1_size_kb', self.l1_size_kb)
+        self.l2_size_kb = self.palloy_config.get('l2_size_kb', self.l2_size_kb)
+        self.l2_num_banks = self.palloy_config.get('l2_num_banks', self.l2_num_banks)
+        workload = self.palloy_config.get('workload_path', str(self.workload_path))
+        self.workload_path = Path(workload).resolve()
+        
+        success = True
+        
+        # Update configuration files
+        if not self._update_cluster_config(self.num_cluster_cores, self.l1_size_kb):
+            print(f"{Colors.RED}✗ Failed to update cluster config{Colors.RESET}")
+            success = False
+    
+        if not self._update_soc_config(self.l2_size_kb, self.l2_num_banks):
+            print(f"{Colors.RED}✗ Failed to update SoC config{Colors.RESET}")
+            success = False
+        
+        if success:
+            print(f"{Colors.GREEN}✓ Configuration files updated successfully{Colors.RESET}")
+        return success
     
     def _run_command(self, cmd: str, cwd: Optional[Path] = None, 
                      env: Optional[Dict] = None, shell: bool = True) -> subprocess.CompletedProcess:
@@ -158,7 +343,7 @@ class PalloySimulator:
         config_path = self.sdk_dir / "configs" / self.config
         
         # Build command that sources config and compiles
-        cmd = f"source {config_path} && make all -j16 -B CORE={self.num_cluster_cores}"
+        cmd = f"source {config_path} && make all -j16 -B CORE={self.num_cluster_cores} NUM_CORES={self.num_cluster_cores} USE_CLUSTER=1"
         
         # Need to activate venv in the same shell
         activate_script = self.venv_dir / "bin" / "activate"
@@ -182,8 +367,11 @@ class PalloySimulator:
         """
         print(f"\n{Colors.BLUE}{Colors.BOLD}[3/4] RUNNING SIMULATION{Colors.RESET}")
         
-        # Set trace file environment variable
-        env = {"TRACE_FILE": str(self.trace_file)}
+        # Set environment variables
+        env = {
+            "TRACE_FILE": str(self.trace_file),
+            "CONFIG_NB_CLUSTER_PE": str(self.num_cluster_cores)
+        }
         
         # Source config and run
         config_path = self.sdk_dir / "configs" / self.config
@@ -222,14 +410,25 @@ class PalloySimulator:
         # Format: timestamp_ps: cycles: ...
         if self.trace_file.exists():
             try:
-                with open(self.trace_file, 'r') as f:
-                    # Read last non-empty line
-                    lines = f.readlines()
+                with open(self.trace_file, 'rb') as f:
+                    # Read only the last line efficiently for huge files
+                    # Seek to end and read backwards to find last non-empty line
+                    f.seek(0, 2)  # Go to end of file
+                    file_size = f.tell()
+                    
                     last_line = None
-                    for line in reversed(lines):
-                        if line.strip():
-                            last_line = line
-                            break
+                    buffer_size = min(8192, file_size)  # Read up to 8KB from end
+                    
+                    if file_size > 0:
+                        f.seek(max(0, file_size - buffer_size))
+                        buffer = f.read().decode('utf-8', errors='ignore')
+                        lines = buffer.splitlines()
+                        
+                        # Find last non-empty line
+                        for line in reversed(lines):
+                            if line.strip():
+                                last_line = line
+                                break
                     
                     if last_line:
                         # Parse format: "3570976278: 104301: ..."
@@ -267,9 +466,16 @@ class PalloySimulator:
         """
         print(f"\n{Colors.GREEN}{Colors.BOLD}{'='*60}")
         print(f"STARTING FULL SIMULATION WORKFLOW")
-        print(f"Workload: {self.workload_path}")
-        print(f"Cores: {self.num_cluster_cores}")
         print(f"{'='*60}{Colors.RESET}")
+        
+        # Print configuration
+        self.palloy_config.print_config()
+        
+        # Step 0: Update configuration files using set_params
+        print(f"\n{Colors.BLUE}{Colors.BOLD}[0/4] UPDATING CONFIGURATION{Colors.RESET}")
+        if not self.set_params():
+            print(f"\n{Colors.RED}✗ Workflow failed at configuration update{Colors.RESET}")
+            return {}
         
         # Step 1: Rebuild architecture
         if not self.rebuild_architecture():
@@ -312,9 +518,6 @@ class PalloySimulator:
 if __name__ == "__main__":
     # Example configuration
     sim = PalloySimulator(
-        #workload_path="./pulp-sdk/applications/MobileNetV1/",
-        workload_path="./pulp-sdk/tests/hello/",
-        num_cluster_cores=4,
         config="palloy.sh",
         target="palloy"
     )

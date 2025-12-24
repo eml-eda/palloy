@@ -1,0 +1,7 @@
+{
+  "num_cluster_cores": 8,
+  "l1_size_kb": 64,
+  "l2_size_kb": 1600,
+  "l2_num_banks": 4,
+  "workload_path": "/home/lelez/git/palloy/pulp-sdk/applications/MobileNetV1/"
+}

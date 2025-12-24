@@ -5,6 +5,7 @@
 ###############################################################################
 
 APP_DIR="./pulp-sdk/applications/MobileNetV1/"
+# APP_DIR="./pulp-sdk/tests/hello/"
 NUM_CLUSTER_CORES=4
 
 CONFIG="palloy.sh"
