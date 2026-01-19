@@ -11,7 +11,6 @@ import re
 from pathlib import Path
 from typing import Optional, Dict, Any
 import json
-import shutil
 
 # ANSI color codes
 class Colors:
@@ -26,7 +25,7 @@ class Colors:
 
 
 class PalloyConfig:
-    """Class to manage Palloy simulation configuration parameters"""
+    """Manages Palloy simulation configuration parameters"""
     
     def __init__(self, 
                  config_file: str = "palloy_config.json",
@@ -84,11 +83,11 @@ class PalloyConfig:
     def print_config(self):
         """Print current configuration"""
         print(f"\n{Colors.CYAN}{Colors.BOLD}Current Configuration:{Colors.RESET}")
-        print(f"  Workload:         {self.params['workload_path']}")
-        print(f"  Cluster Cores:    {self.params['num_cluster_cores']}")
-        print(f"  L1 Size:          {self.params['l1_size_kb']} KB")
-        print(f"  L2 Size:          {self.params['l2_size_kb']} KB")
-        print(f"  L2 Banks:         {self.params['l2_num_banks']}")
+        print(f"  Workload:      {self.params['workload_path']}")
+        print(f"  Cluster Cores: {self.params['num_cluster_cores']}")
+        print(f"  L1 Size:       {self.params['l1_size_kb']} KB")
+        print(f"  L2 Size:       {self.params['l2_size_kb']} KB")
+        print(f"  L2 Banks:      {self.params['l2_num_banks']}")
 
 
 class PalloySimulator:
@@ -108,7 +107,8 @@ class PalloySimulator:
                  l1_size_kb: Optional[int] = None,
                  l2_size_kb: Optional[int] = None,
                  l2_num_banks: Optional[int] = None,
-                 palloy_config_file: str = "palloy_config.json"):
+                 palloy_config_file: str = "palloy_config.json",
+                 debug: bool = False):
         """
         Initialize the Palloy simulator
         
@@ -127,11 +127,19 @@ class PalloySimulator:
             l2_size_kb: L2 memory size in KB (None = use from config)
             l2_num_banks: Number of L2 banks (None = use from config)
             palloy_config_file: Path to palloy configuration file
+            debug: Enable debug mode with streaming output (default: False)
         """
-        # Initialize configuration manager
-        cluster_base = Path(cluster_config_file).parent / "cluster.json"
-        soc_base = Path(soc_config_file).parent / "soc.json"
-        self.palloy_config = PalloyConfig(palloy_config_file, cluster_base, soc_base)
+        # Get the directory of this script
+        script_dir = Path(__file__).resolve().parent
+        
+        # Initialize configuration manager with paths relative to script
+        cluster_base = script_dir / Path(cluster_config_file).parent / "cluster.json"
+        soc_base = script_dir / Path(soc_config_file).parent / "soc.json"
+        self.palloy_config = PalloyConfig(
+            str(script_dir / palloy_config_file),
+            str(cluster_base),
+            str(soc_base)
+        )
         
         # Update config with provided parameters
         self.palloy_config.update(
@@ -151,12 +159,13 @@ class PalloySimulator:
         
         self.config = config
         self.target = target
-        self.venv_dir = Path(venv_dir).resolve()
-        self.gvsoc_dir = Path(gvsoc_dir).resolve()
-        self.sdk_dir = Path(sdk_dir).resolve()
-        self.trace_file = Path(trace_file).resolve()
-        self.cluster_config_file = Path(cluster_config_file).resolve()
-        self.soc_config_file = Path(soc_config_file).resolve()
+        self.debug = debug
+        self.venv_dir = (script_dir / venv_dir).resolve()
+        self.gvsoc_dir = (script_dir / gvsoc_dir).resolve()
+        self.sdk_dir = (script_dir / sdk_dir).resolve()
+        self.trace_file = (script_dir / trace_file).resolve()
+        self.cluster_config_file = (script_dir / cluster_config_file).resolve()
+        self.soc_config_file = (script_dir / soc_config_file).resolve()
         
         # Base configuration files
         self.cluster_base_file = cluster_base
@@ -171,7 +180,6 @@ class PalloySimulator:
     def _update_cluster_config(self, cores_per_cluster: int, l1_size_kb: int) -> bool:
         """
         Update cluster configuration JSON file
-        Reads from baseline file and writes to .new.json
         
         Args:
             cores_per_cluster: Number of cores per cluster
@@ -181,22 +189,18 @@ class PalloySimulator:
             True if successful, False otherwise
         """
         try:
-            # Read from baseline file
             with open(self.cluster_base_file, 'r') as f:
                 config = json.load(f)
             
-            # Update num cores, +1 due to the control core
+            # Update core count (+1 for control core)
             config["nb_pe"] = cores_per_cluster + 1
             config["icache"]["config"]["nb_cores"] = cores_per_cluster + 1
             config["peripherals"]["event_unit"]["config"]["nb_core"] = cores_per_cluster + 1
-            # TODO: check if this is needed
-            #config["peripherals"]["event_unit"]["config"]["properties"]["barriers"]["nb_barriers"] = cores_per_cluster + 1
-
-            # Update L1 size as hex string
+            
+            # Update L1 size
             l1_size_bytes = l1_size_kb * 1024
             config["l1"]["mapping"]["size"] = f"0x{l1_size_bytes:08x}"
-
-            # Write to .new.json file
+            
             with open(self.cluster_config_file, 'w') as f:
                 json.dump(config, f, indent=4)
             return True
@@ -207,7 +211,6 @@ class PalloySimulator:
     def _update_soc_config(self, l2_size_kb: int, l2_num_banks: int) -> bool:
         """
         Update SoC configuration JSON file
-        Reads from baseline file and writes to .new.json
         
         Args:
             l2_size_kb: L2 memory size in KB
@@ -217,56 +220,22 @@ class PalloySimulator:
             True if successful, False otherwise
         """
         try:
-            # Read from baseline file
             with open(self.soc_base_file, 'r') as f:
                 config = json.load(f)
             
-            # Update L2 sizes as hex strings
+            # Update L2 sizes (2 banks of 32KB reserved for L2 private)
             l2_size_bytes = l2_size_kb * 1024
-            l2_shared_size_bytes = l2_size_bytes - (0x00008000 * 2)  # 2 banks of 32kB for L2 priv
+            l2_shared_size_bytes = l2_size_bytes - (0x00008000 * 2)
             config["l2"]["size"] = f"0x{l2_size_bytes:08x}"
             config["l2"]["shared"]["mapping"]["size"] = f"0x{l2_shared_size_bytes:08x}"
             config["l2"]["shared"]["nb_banks"] = l2_num_banks
-
-            # Write to .new.json file
+            
             with open(self.soc_config_file, 'w') as f:
                 json.dump(config, f, indent=4)
             return True
         except Exception as e:
             print(f"{Colors.RED}✗ Error updating SoC config: {e}{Colors.RESET}")
             return False
-        
-    def set_params(self) -> bool:
-        """
-        Update configuration files based on current parameters from palloy_config
-        Reads parameters from palloy_config.json if not already set
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        
-        # Get parameters from config (use current values if already set)
-        self.num_cluster_cores = self.palloy_config.get('num_cluster_cores', self.num_cluster_cores)
-        self.l1_size_kb = self.palloy_config.get('l1_size_kb', self.l1_size_kb)
-        self.l2_size_kb = self.palloy_config.get('l2_size_kb', self.l2_size_kb)
-        self.l2_num_banks = self.palloy_config.get('l2_num_banks', self.l2_num_banks)
-        workload = self.palloy_config.get('workload_path', str(self.workload_path))
-        self.workload_path = Path(workload).resolve()
-        
-        success = True
-        
-        # Update configuration files
-        if not self._update_cluster_config(self.num_cluster_cores, self.l1_size_kb):
-            print(f"{Colors.RED}✗ Failed to update cluster config{Colors.RESET}")
-            success = False
-    
-        if not self._update_soc_config(self.l2_size_kb, self.l2_num_banks):
-            print(f"{Colors.RED}✗ Failed to update SoC config{Colors.RESET}")
-            success = False
-        
-        if success:
-            print(f"{Colors.GREEN}✓ Configuration files updated successfully{Colors.RESET}")
-        return success
     
     def _run_command(self, cmd: str, cwd: Optional[Path] = None, 
                      env: Optional[Dict] = None, shell: bool = True) -> subprocess.CompletedProcess:
@@ -304,6 +273,88 @@ class PalloySimulator:
             
         return result
     
+    def _run_command_streaming(self, cmd: str, cwd: Optional[Path] = None, 
+                               env: Optional[Dict] = None, shell: bool = True) -> subprocess.CompletedProcess:
+        """
+        Run a shell command with real-time output streaming
+        
+        Args:
+            cmd: Command to run
+            cwd: Working directory for command
+            env: Environment variables
+            shell: Whether to run in shell mode
+            
+        Returns:
+            CompletedProcess object
+        """
+        run_env = os.environ.copy()
+        if env:
+            run_env.update(env)
+            
+        print(f"{Colors.GRAY}Running: {cmd}{Colors.RESET}")
+        
+        # Start the process without capturing output for true real-time streaming
+        # Use unbuffered output by setting PYTHONUNBUFFERED
+        run_env['PYTHONUNBUFFERED'] = '1'
+        
+        process = subprocess.Popen(
+            cmd,
+            shell=shell,
+            executable='/bin/bash',
+            cwd=cwd or self.original_cwd,
+            env=run_env,
+            stdout=None,  # Direct output to terminal
+            stderr=None,  # Direct errors to terminal
+            text=True
+        )
+        
+        # Wait for process to complete
+        returncode = process.wait()
+        
+        # Create a CompletedProcess-like object to maintain compatibility
+        # Note: stdout/stderr are empty since we streamed directly to terminal
+        result = subprocess.CompletedProcess(
+            args=cmd,
+            returncode=returncode,
+            stdout='',
+            stderr=''
+        )
+        
+        if result.returncode != 0:
+            print(f"{Colors.RED}✗ Error running command (exit code {result.returncode}){Colors.RESET}")
+            
+        return result
+    
+    #
+    # Main workflow methods
+    #
+    
+    def set_params(self) -> bool:
+        """
+        Update configuration files based on current parameters
+        
+        Returns:
+            True if successful, False otherwise
+        """
+        print(f"\n{Colors.BLUE}{Colors.BOLD}[0/4] UPDATING CONFIGURATION{Colors.RESET}")
+        
+        # Get parameters from config
+        self.num_cluster_cores = self.palloy_config.get('num_cluster_cores', self.num_cluster_cores)
+        self.l1_size_kb = self.palloy_config.get('l1_size_kb', self.l1_size_kb)
+        self.l2_size_kb = self.palloy_config.get('l2_size_kb', self.l2_size_kb)
+        self.l2_num_banks = self.palloy_config.get('l2_num_banks', self.l2_num_banks)
+        workload = self.palloy_config.get('workload_path', str(self.workload_path))
+        self.workload_path = Path(workload).resolve()
+        
+        # Update configuration files
+        cluster_ok = self._update_cluster_config(self.num_cluster_cores, self.l1_size_kb)
+        soc_ok = self._update_soc_config(self.l2_size_kb, self.l2_num_banks)
+        
+        if cluster_ok and soc_ok:
+            print(f"{Colors.GREEN}✓ Configuration files updated successfully{Colors.RESET}")
+            return True
+        return False
+    
     def rebuild_architecture(self) -> bool:
         """
         Rebuild the GVSoC architecture/target
@@ -313,17 +364,18 @@ class PalloySimulator:
         """
         print(f"\n{Colors.BLUE}{Colors.BOLD}[1/4] REBUILDING ARCHITECTURE: {self.target}{Colors.RESET}")
         
-        # Build command
-        cmd = f"make TARGETS={self.target} build -j16"
+        activate_script = self.venv_dir / "bin" / "activate"
+        cmd = f"source {activate_script} && make TARGETS={self.target} build -j$(nproc)"
         
-        result = self._run_command(cmd, cwd=self.gvsoc_dir)
+        run_method = self._run_command_streaming if self.debug else self._run_command
+        result = run_method(cmd, cwd=self.gvsoc_dir)
         
         if result.returncode == 0:
             print(f"{Colors.GREEN}✓ Architecture rebuild successful{Colors.RESET}")
             return True
-        else:
-            print(f"{Colors.RED}✗ Architecture rebuild failed{Colors.RESET}")
-            return False
+        
+        print(f"{Colors.RED}✗ Architecture rebuild failed{Colors.RESET}")
+        return False
     
     def recompile_workload(self) -> bool:
         """
@@ -333,7 +385,6 @@ class PalloySimulator:
             True if successful, False otherwise
         """
         print(f"\n{Colors.BLUE}{Colors.BOLD}[2/4] RECOMPILING WORKLOAD: {self.workload_path}{Colors.RESET}")
-        print(f"{Colors.CYAN}Cluster cores: {self.num_cluster_cores}{Colors.RESET}")
         
         if not self.workload_path.exists():
             print(f"{Colors.RED}✗ Workload path does not exist: {self.workload_path}{Colors.RESET}")
@@ -357,9 +408,9 @@ class PalloySimulator:
         if result.returncode == 0:
             print(f"{Colors.GREEN}✓ Workload compilation successful{Colors.RESET}")
             return True
-        else:
-            print(f"{Colors.RED}✗ Workload compilation failed{Colors.RESET}")
-            return False
+        
+        print(f"{Colors.RED}✗ Workload compilation failed{Colors.RESET}")
+        return False
     
     def run_simulation(self) -> bool:
         """
@@ -370,28 +421,24 @@ class PalloySimulator:
         """
         print(f"\n{Colors.BLUE}{Colors.BOLD}[3/4] RUNNING SIMULATION{Colors.RESET}")
         
-        # Set environment variables
         env = {
             "TRACE_FILE": str(self.trace_file),
             "CONFIG_NB_CLUSTER_PE": str(self.num_cluster_cores)
         }
         
-        # Source config and run
-        config_path = self.sdk_dir / "configs" / self.config
-        cmd = f"source {config_path} && make run -j16"
-        
-        # Activate venv
         activate_script = self.venv_dir / "bin" / "activate"
-        full_cmd = f"source {activate_script} && {cmd}"
+        config_path = self.sdk_dir / "configs" / self.config
+        cmd = f"source {activate_script} && source {config_path} && make run -j$(nproc)"
         
-        result = self._run_command(full_cmd, cwd=self.workload_path, env=env)
+        run_method = self._run_command_streaming if self.debug else self._run_command
+        result = run_method(cmd, cwd=self.workload_path, env=env)
         
         if result.returncode == 0:
             print(f"{Colors.GREEN}✓ Simulation completed successfully{Colors.RESET}")
             return True
-        else:
-            print(f"{Colors.RED}✗ Simulation failed{Colors.RESET}")
-            return False
+        
+        print(f"{Colors.RED}✗ Simulation failed{Colors.RESET}")
+        return False
     
     def extract_metrics(self) -> Dict[str, Any]:
         """
@@ -409,46 +456,37 @@ class PalloySimulator:
             "timestamp_ps": None,
         }
         
-        # Extract cycles from last line of trace file
-        # Format: timestamp_ps: cycles: ...
+        # Extract cycles from last line of trace file (format: "timestamp_ps: cycles: ...")
         if self.trace_file.exists():
             try:
                 with open(self.trace_file, 'rb') as f:
-                    # Read only the last line efficiently for huge files
-                    # Seek to end and read backwards to find last non-empty line
-                    f.seek(0, 2)  # Go to end of file
+                    f.seek(0, 2)
                     file_size = f.tell()
-                    
-                    last_line = None
-                    buffer_size = min(8192, file_size)  # Read up to 8KB from end
-                    
                     if file_size > 0:
+                        buffer_size = min(8192, file_size)
                         f.seek(max(0, file_size - buffer_size))
                         buffer = f.read().decode('utf-8', errors='ignore')
                         lines = buffer.splitlines()
                         
                         # Find last non-empty line
-                        for line in reversed(lines):
-                            if line.strip():
-                                last_line = line
-                                break
-                    
-                    if last_line:
-                        # Parse format: "3570976278: 104301: ..."
-                        match = re.match(r'^(\d+):\s*(\d+):', last_line)
-                        if match:
-                            metrics["timestamp_ps"] = int(match.group(1))
-                            metrics["cycles"] = int(match.group(2))
-                            print(f"{Colors.GREEN}✓ Parsed from trace: timestamp={metrics['timestamp_ps']} ps, cycles={metrics['cycles']}{Colors.RESET}")
-                        else:
-                            print(f"{Colors.YELLOW}⚠ Warning: Could not parse last line format: {last_line[:100]}{Colors.RESET}")
-                    else:
-                        print(f"{Colors.YELLOW}⚠ Warning: Trace file is empty{Colors.RESET}")
+                        last_line = next((line for line in reversed(lines) if line.strip()), None)
                         
+                        if last_line:
+                            match = re.match(r'^(\d+):\s*(\d+):', last_line)
+                            if match:
+                                metrics["timestamp_ps"] = int(match.group(1))
+                                metrics["cycles"] = int(match.group(2))
+                                print(f"{Colors.GREEN}✓ Parsed from trace: timestamp={metrics['timestamp_ps']} ps, cycles={metrics['cycles']}{Colors.RESET}")
+                            else:
+                                print(f"{Colors.YELLOW}⚠ Could not parse last line: {last_line[:100]}{Colors.RESET}")
+                        else:
+                            print(f"{Colors.YELLOW}⚠ Trace file is empty{Colors.RESET}")
+                    else:
+                        print(f"{Colors.YELLOW}⚠ Trace file is empty{Colors.RESET}")
             except Exception as e:
-                print(f"{Colors.YELLOW}⚠ Warning: Could not read trace file: {e}{Colors.RESET}")
+                print(f"{Colors.YELLOW}⚠ Could not read trace file: {e}{Colors.RESET}")
         else:
-            print(f"{Colors.YELLOW}⚠ Warning: Trace file not found: {self.trace_file}{Colors.RESET}")
+            print(f"{Colors.YELLOW}⚠ Trace file not found: {self.trace_file}{Colors.RESET}")
         
         self.last_results = metrics
         
@@ -475,7 +513,6 @@ class PalloySimulator:
         self.palloy_config.print_config()
         
         # Step 0: Update configuration files using set_params
-        print(f"\n{Colors.BLUE}{Colors.BOLD}[0/4] UPDATING CONFIGURATION{Colors.RESET}")
         if not self.set_params():
             print(f"\n{Colors.RED}✗ Workflow failed at configuration update{Colors.RESET}")
             return {}
@@ -532,6 +569,3 @@ if __name__ == "__main__":
     if metrics:
         sim.save_results("results.json")
     
-    # Example: Run with different parameters
-    # sim.set_params(num_cluster_cores=8)
-    # metrics_8cores = sim.run_full_workflow()
