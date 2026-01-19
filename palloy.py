@@ -339,17 +339,20 @@ class PalloySimulator:
             print(f"{Colors.RED}✗ Workload path does not exist: {self.workload_path}{Colors.RESET}")
             return False
         
-        # Source config and compile
-        config_path = self.sdk_dir / "configs" / self.config
-        
-        # Build command that sources config and compiles
-        cmd = f"source {config_path} && make all -j16 -B CORE={self.num_cluster_cores} NUM_CORES={self.num_cluster_cores} USE_CLUSTER=1"
-        
-        # Need to activate venv in the same shell
         activate_script = self.venv_dir / "bin" / "activate"
-        full_cmd = f"source {activate_script} && {cmd}"
+        config_path = self.sdk_dir / "configs" / self.config
+        cmd = (
+            f"source {activate_script} && source {config_path} && "
+            f"make all -j$(nproc) -B "
+            f"CONFIG_NB_CLUSTER_PE={self.num_cluster_cores} "
+            f"CORE={self.num_cluster_cores} "
+            f"NUM_CORES={self.num_cluster_cores} "
+            f"ARCHI_CLUSTER_NB_PE={self.num_cluster_cores} "
+            f"USE_CLUSTER=1"
+        )
         
-        result = self._run_command(full_cmd, cwd=self.workload_path)
+        run_method = self._run_command_streaming if self.debug else self._run_command
+        result = run_method(cmd, cwd=self.workload_path)
         
         if result.returncode == 0:
             print(f"{Colors.GREEN}✓ Workload compilation successful{Colors.RESET}")
