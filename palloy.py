@@ -367,7 +367,10 @@ class PalloySimulator:
         print(f"\n{Colors.BLUE}{Colors.BOLD}[1/4] REBUILDING ARCHITECTURE: {self.target}{Colors.RESET}")
         
         activate_script = self.venv_dir / "bin" / "activate"
-        cmd = f"source {activate_script} && make TARGETS={self.target} build -j$(nproc)"
+        cmd = (
+            f"source {activate_script} && "
+            f"make TARGETS={self.target} build -j$(nproc) "
+        )
         
         run_method = self._run_command_streaming if self.debug else self._run_command
         result = run_method(cmd, cwd=self.gvsoc_dir)
@@ -459,12 +462,18 @@ class PalloySimulator:
         }
         
         # Extract cycles from last line of trace file (format: "timestamp_ps: cycles: ...")
-        if self.trace_file.exists():
+        if not self.trace_file.exists():
+            print(f"{Colors.YELLOW}⚠ Trace file not found: {self.trace_file}{Colors.RESET}")
+        else:
             try:
                 with open(self.trace_file, 'rb') as f:
                     f.seek(0, 2)
                     file_size = f.tell()
-                    if file_size > 0:
+                    
+                    if file_size == 0:
+                        print(f"{Colors.YELLOW}⚠ Trace file is empty{Colors.RESET}")
+                    else:
+                        # Read last portion of file to extract the last line
                         buffer_size = min(8192, file_size)
                         f.seek(max(0, file_size - buffer_size))
                         buffer = f.read().decode('utf-8', errors='ignore')
@@ -473,7 +482,10 @@ class PalloySimulator:
                         # Find last non-empty line
                         last_line = next((line for line in reversed(lines) if line.strip()), None)
                         
-                        if last_line:
+                        if not last_line:
+                            print(f"{Colors.YELLOW}⚠ No valid content in trace file{Colors.RESET}")
+                        else:
+                            # Parse timestamp and cycles from line
                             match = re.match(r'^(\d+):\s*(\d+):', last_line)
                             if match:
                                 metrics["timestamp_ps"] = int(match.group(1))
@@ -481,14 +493,9 @@ class PalloySimulator:
                                 print(f"{Colors.GREEN}✓ Parsed from trace: timestamp={metrics['timestamp_ps']} ps, cycles={metrics['cycles']}{Colors.RESET}")
                             else:
                                 print(f"{Colors.YELLOW}⚠ Could not parse last line: {last_line[:100]}{Colors.RESET}")
-                        else:
-                            print(f"{Colors.YELLOW}⚠ Trace file is empty{Colors.RESET}")
-                    else:
-                        print(f"{Colors.YELLOW}⚠ Trace file is empty{Colors.RESET}")
+                                
             except Exception as e:
                 print(f"{Colors.YELLOW}⚠ Could not read trace file: {e}{Colors.RESET}")
-        else:
-            print(f"{Colors.YELLOW}⚠ Trace file not found: {self.trace_file}{Colors.RESET}")
         
         self.last_results = metrics
         
@@ -556,12 +563,14 @@ class PalloySimulator:
         print(f"{Colors.GREEN}✓ Results saved to {output_path}{Colors.RESET}")
 
 
+
 # Example usage
 if __name__ == "__main__":
-    # Example configuration
+    # Example helloworld configuration
     sim = PalloySimulator(
         config="palloy.sh",
-        target="palloy"
+        target="palloy",
+        workload_path="./pulp-sdk/tests/hello/",
     )
     
     # Run the full workflow

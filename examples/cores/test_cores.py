@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Simple test: Compare two different core counts
+Core test: Compare two different core counts
 Default: 4 cores vs 8 cores
-Usage: python test_simple.py [cores1] [cores2]
+Usage: python test_cores.py [cores1] [cores2]
 """
 
 import sys
@@ -27,7 +27,7 @@ def main():
     # First configuration
     print(f"\n--- Running with {cores1} cores ---")
     sim1 = PalloySimulator(
-        workload_path="../../pulp-sdk/applications/MobileNetV1/",
+        workload_path=str(Path(__file__).parent.parent.parent / "pulp-sdk/applications/MobileNetV1/"),
         num_cluster_cores=cores1,
         debug=True
     )
@@ -38,7 +38,7 @@ def main():
     # Second configuration
     print(f"\n--- Running with {cores2} cores ---")
     sim2 = PalloySimulator(
-        workload_path="../../pulp-sdk/applications/MobileNetV1/",
+        workload_path=str(Path(__file__).parent.parent.parent / "pulp-sdk/applications/MobileNetV1/"),
         num_cluster_cores=cores2,
         debug=True
     )
