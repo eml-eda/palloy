@@ -325,6 +325,8 @@ class PalloySimulator:
             
         return result
     
+    
+    
     #
     # Main workflow methods
     #
@@ -421,17 +423,17 @@ class PalloySimulator:
         """
         print(f"\n{Colors.BLUE}{Colors.BOLD}[3/4] RUNNING SIMULATION{Colors.RESET}")
         
-        env = {
-            "TRACE_FILE": str(self.trace_file),
-            "CONFIG_NB_CLUSTER_PE": str(self.num_cluster_cores)
-        }
-        
         activate_script = self.venv_dir / "bin" / "activate"
         config_path = self.sdk_dir / "configs" / self.config
-        cmd = f"source {activate_script} && source {config_path} && make run -j$(nproc)"
+        cmd = (
+            f"source {activate_script} && source {config_path} "
+            f"&& make run -j$(nproc) "
+            f"runner_args='--trace=insn:{self.trace_file} --trace-level=DEBUG --debug-mode' "
+            f"CONFIG_NB_CLUSTER_PE={self.num_cluster_cores}"
+        )
         
         run_method = self._run_command_streaming if self.debug else self._run_command
-        result = run_method(cmd, cwd=self.workload_path, env=env)
+        result = run_method(cmd, cwd=self.workload_path)
         
         if result.returncode == 0:
             print(f"{Colors.GREEN}✓ Simulation completed successfully{Colors.RESET}")
