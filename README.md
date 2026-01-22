@@ -1,6 +1,52 @@
 # 🏐 Palloy
 
-**Palloy** (PULP-Alloy) is a Python framework for automating PULP GVSoC simulation workflows. It streamlines the process of building custom architectures, compiling workloads, running simulations, and finally extracting performance metrics.
+**Palloy** (PULP-Alloy) is a Python framework for automating PULP GVSoC simulation workflows. It streamlines the process of building customized PULP architectures, compiling workloads, running simulations, and extracting performance metrics.
+
+## Requirements
+
+- Python 3.x
+- PULP RISC-V toolchain
+- System dependencies (build-essential, cmake, git, libsdl2-dev, etc.)
+
+## Setup
+
+### Option 1: Docker (Recommended)
+
+Use the provided Dockerfile for a complete containerized setup with all dependencies pre-installed:
+
+```bash
+cd docker
+./build.sh    # Build the Docker image
+./run.sh      # Run the container
+```
+
+See [docker/palloy.dockerfile](docker/palloy.dockerfile) for details.
+
+### Option 2: Local Installation
+
+1. **Install PULP RISC-V toolchain:**
+```bash
+curl -L https://github.com/pulp-platform/pulp-riscv-gnu-toolchain/releases/download/v1.0.16/v1.0.16-pulp-riscv-gcc-ubuntu-18.tar.bz2 -o riscv32.tar.bz2
+tar -xf riscv32.tar.bz2
+sudo mv ./v1.0.16-pulp-riscv-gcc-ubuntu-18 /opt/pulp_toolchain
+rm riscv32.tar.bz2
+
+# Add to ~/.bashrc
+export PULP_RISCV_GCC_TOOLCHAIN=/opt/pulp_toolchain
+export PATH=$PULP_RISCV_GCC_TOOLCHAIN/bin:$PATH
+```
+
+2. **Clone and initialize repository:**
+```bash
+git clone https://github.com/eml-eda/palloy.git
+cd palloy
+git submodule update --init --recursive
+```
+
+3. **Create GVSoC virtual environment:**
+```bash
+./venv.sh
+```
 
 ## Quick Start
 
@@ -9,22 +55,19 @@
 ```python
 from palloy import PalloySimulator
 
-# Initialize the simulator with default configuration
-sim = PalloySimulator(
-    config="palloy.sh",
-    target="palloy"
-)
+# Initialize simulator with default configuration
+sim = PalloySimulator()
 
-# Run the complete workflow (uses palloy_config.json parameters)
+# Run complete workflow
 metrics = sim.run_full_workflow()
 
-# Save results to JSON
+# Save results
 sim.save_results("results.json")
 ```
 
 ### Using Configuration File
 
-Palloy automatically loads parameters from `palloy_config.json` if it exists:
+Palloy automatically loads parameters from `palloy_config.json`:
 
 ```json
 {
@@ -36,201 +79,117 @@ Palloy automatically loads parameters from `palloy_config.json` if it exists:
 }
 ```
 
-You can also override parameters when creating the simulator:
+Override parameters programmatically:
 
 ```python
 sim = PalloySimulator(
-    workload_path="./pulp-sdk/applications/YourApp/",
+    workload_path="./pulp-sdk/applications/MyApp/",
     num_cluster_cores=4,
-    l1_size_kb=128,
-    l2_size_kb=2048,
-    l2_num_banks=8
+    l1_size_kb=128
 )
 ```
 
-### Running from Command Line
+### Command Line Usage
 
 ```bash
-# Edit the configuration in palloy_config.json or palloy.py
+# Edit palloy_config.json then run
 python3 palloy.py
 ```
 
-## Configuration Management
+## Configuration
 
-### Configuration File (palloy_config.json)
+### Parameters
 
-Palloy uses a JSON configuration file to manage simulation parameters. The configuration is automatically loaded on initialization:
-
-**Default Parameters:**
+**Main Parameters:**
 - `num_cluster_cores`: Number of cluster cores (default: 8)
 - `l1_size_kb`: L1 cache size in KB (default: 64)
 - `l2_size_kb`: L2 memory size in KB (default: 1600)
 - `l2_num_banks`: Number of L2 memory banks (default: 4)
-- `workload_path`: Path to the application (default: "./pulp-sdk/tests/hello/")
+- `workload_path`: Path to application (default: "./pulp-sdk/tests/hello/")
 
-### Updating Architecture Configuration
+**Build & Environment:**
+- `config`: Config file name (default: "palloy.sh")
+- `target`: GVSoC target name (default: "palloy")
+- `venv_dir`: Virtual environment path (default: "./.venv/")
+- `gvsoc_dir`: GVSoC directory (default: "./gvcuck/")
+- `sdk_dir`: PULP SDK directory (default: "./pulp-sdk/")
+- `debug`: Enable debug output streaming (default: False)
 
-The `set_params()` method automatically updates the GVSoC architecture configuration files:
+**Configuration Files:**
+- `palloy_config_file`: Config file path (default: "palloy_config.json")
+- `cluster_config_file`: Cluster config output
+- `soc_config_file`: SoC config output  
+- `trace_file`: Trace output path (default: "./traces.log")
+
+### Programmatic Configuration
 
 ```python
-# Updates cluster.json and soc.json with current parameters
+# View current configuration
+sim.palloy_config.print_config()
+
+# Update parameters
+sim.palloy_config.update(num_cluster_cores=16)
+
+# Apply to architecture files
 sim.set_params()
 ```
 
-This method:
-- Updates `cluster.new.json` with core count and L1 size
-- Updates `soc.new.json` with L2 size and bank configuration
-- Reads from baseline files (`cluster.json`, `soc.json`)
-- Automatically called during `run_full_workflow()`
-
-### Viewing Current Configuration
-
-```python
-# Print current configuration
-sim.palloy_config.print_config()
-```
-```
-
-## Workflow Steps
+## Workflow
 
 ### Complete Workflow
 
-The `run_full_workflow()` method executes all steps automatically:
+The `run_full_workflow()` executes all steps:
 
 ```python
 metrics = sim.run_full_workflow()
 ```
 
-This performs:
-1. **Update Configuration**: Apply parameters to architecture config files
-2. **Rebuild Architecture**: Build the GVSoC target with specified configuration
-3. **Recompile Workload**: Compile the application with the specified parameters
-4. **Run Simulation**: Execute the GVSoC simulation
-5. **Extract Metrics**: Parse the trace file to extract performance data
+**Steps:**
+1. Update configuration files
+2. Rebuild GVSoC architecture
+3. Recompile workload
+4. Run simulation
+5. Extract metrics
 
 ### Individual Steps
 
-You can also run individual steps of the workflow:
-
 ```python
-# Step 0: Update configuration files
-sim.set_params()
-
-# Step 1: Rebuild architecture
-sim.rebuild_architecture()
-
-# Step 2: Recompile workload
-sim.recompile_workload()
-
-# Step 3: Run simulation
-sim.run_simulation()
-
-# Step 4: Extract metrics
-metrics = sim.extract_metrics()
+sim.set_params()                 # Update config files
+sim.rebuild_architecture()       # Build GVSoC target
+sim.recompile_workload()         # Compile application
+sim.run_simulation()             # Execute simulation
+metrics = sim.extract_metrics()  # Parse results
 ```
-
-
 
 ## Output Metrics
 
-The framework extracts the following metrics:
+Results are returned as a dictionary:
 
-- **cycles**: Number of simulation cycles
-- **timestamp_ps**: Simulation timestamp in picoseconds
-- **num_cluster_cores**: Number of cluster cores used
-- **workload**: Path to the workload/application
+- `cycles`: Number of simulation cycles
+- `timestamp_ps`: Simulation timestamp in picoseconds
+- `num_cluster_cores`: Core count used
+- `workload`: Workload path
 
-Results are returned as a dictionary and can be saved to JSON format.
+## Examples
 
-## Requirements
-
-- Python 3.x
-- GVSoC simulator
-- PULP SDK
-- VENV virtual environment with GVSoC dependencies
-
-## Setup
-
-Before running the simulator for the first time, create the GVSoC virtual environment:
-
-```bash
-./venv.sh
-```
-
-This will set up the necessary Python environment with all GVSoC dependencies.
-
-## Advanced Configuration
-
-### PalloySimulator Parameters
-
-Initialize `PalloySimulator` with the following parameters (all optional, will use values from `palloy_config.json` if not provided):
-
-**Core Parameters:**
-- `workload_path`: Path to your application directory
-- `num_cluster_cores`: Number of cluster cores (default from config: 8)
-- `l1_size_kb`: L1 cache size in KB (default from config: 64)
-- `l2_size_kb`: L2 memory size in KB (default from config: 1600)
-- `l2_num_banks`: Number of L2 banks (default from config: 4)
-
-**Build & Environment:**
-- `config`: Config file name in `pulp-sdk/configs/` (default: "palloy.sh")
-- `target`: GVSoC target name (default: "palloy")
-- `venv_dir`: Virtual environment path (default: "./.venv/")
-- `gvsoc_dir`: GVSoC directory path (default: "./gvcuck/")
-- `sdk_dir`: PULP SDK directory path (default: "./pulp-sdk/")
-
-**Configuration Files:**
-- `palloy_config_file`: Palloy configuration file (default: "palloy_config.json")
-- `cluster_config_file`: Cluster config output (default: "./gvcuck/pulp/pulp/chips/pulp_open/cluster.new.json")
-- `soc_config_file`: SoC config output (default: "./gvcuck/pulp/pulp/chips/pulp_open/soc.new.json")
-- `trace_file`: Trace output file path (default: "./traces.log")
-
-### Example: Full Initialization
-
-```python
-sim = PalloySimulator(
-    workload_path="./pulp-sdk/applications/MyApp/",
-    num_cluster_cores=16,
-    l1_size_kb=128,
-    l2_size_kb=3200,
-    l2_num_banks=8,
-    config="palloy.sh",
-    target="palloy",
-    palloy_config_file="my_config.json"
-)
-```
-
-## Usage Examples
-
-### Example 1: Parameter Sweep
+### Parameter Sweep
 
 ```python
 from palloy import PalloySimulator
 
-# Initialize simulator
 sim = PalloySimulator()
 
-# Test different core configurations
 for cores in [2, 4, 8, 16]:
-    print(f"\n=== Testing with {cores} cores ===")
-    
-    # Update configuration
     sim.palloy_config.update(num_cluster_cores=cores)
     sim.num_cluster_cores = cores
     
-    # Run workflow
     metrics = sim.run_full_workflow()
-    
-    # Save results
     sim.save_results(f"results_{cores}cores.json")
 ```
 
-### Example 2: Memory Configuration Study
+### Memory Configuration Study
 
 ```python
-from palloy import PalloySimulator
-
-# Test different L2 configurations
 l2_configs = [
     {"l2_size_kb": 512, "l2_num_banks": 2},
     {"l2_size_kb": 1024, "l2_num_banks": 4},
@@ -240,5 +199,18 @@ l2_configs = [
 for config in l2_configs:
     sim = PalloySimulator(**config)
     metrics = sim.run_full_workflow()
-    print(f"L2 {config['l2_size_kb']}KB, {config['l2_num_banks']} banks: {metrics['cycles']} cycles")
+    print(f"L2 {config['l2_size_kb']}KB: {metrics['cycles']} cycles")
 ```
+
+### Debug Mode
+
+Enable `debug=True` to stream all command outputs in real-time:
+
+```python
+sim = PalloySimulator(debug=True)
+metrics = sim.run_full_workflow()
+```
+
+### More Examples
+
+For additional examples ready to run, see [examples/README.md](examples/README.md).
