@@ -1,6 +1,3 @@
-[submodule "gvcuck"]
-	path = gvcuck
-	url = https://github.com/eml-eda/gvcuck.git
-[submodule "pulp-sdk"]
-	path = pulp-sdk
-	url = https://github.com/eml-eda/pulp-sdk.git
+[submodule "gap-sdk"]
+	path = gap_sdk
+	url = https://github.com/GreenWaves-Technologies/gap_sdk.git
