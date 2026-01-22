@@ -370,6 +370,7 @@ class PalloySimulator:
         cmd = (
             f"source {activate_script} && "
             f"make TARGETS={self.target} build -j$(nproc) "
+            f"runner_args='--power'"
         )
         
         run_method = self._run_command_streaming if self.debug else self._run_command
@@ -431,8 +432,8 @@ class PalloySimulator:
         cmd = (
             f"source {activate_script} && source {config_path} "
             f"&& make run -j$(nproc) "
-            f"runner_args='--trace=insn:{self.trace_file} --trace-level=DEBUG --debug-mode' "
-            f"CONFIG_NB_CLUSTER_PE={self.num_cluster_cores}"
+            f"runner_args='--trace=insn:{self.trace_file} --trace-level=DEBUG --debug-mode --power --event=power --vcd' "
+            f"CONFIG_NB_CLUSTER_PE={self.num_cluster_cores} "
         )
         
         run_method = self._run_command_streaming if self.debug else self._run_command
