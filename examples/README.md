@@ -42,6 +42,14 @@ cd l2
 python test_l2.py [size1] [size2]
 ```
 
+### 4. Matrix Multiplication Parallelization ([matmul_parallel/](matmul_parallel/))
+Evaluate **cluster only** speedup and efficiency of a parallel matrix multiplication workload across different core counts.
+
+```bash
+cd matmul_parallel
+python test_matmul.py
+```
+
 ## Output Structure
 
 Each test creates its own `out/` directory containing:
