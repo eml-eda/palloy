@@ -22,14 +22,21 @@ def main():
     out_dir = Path(__file__).parent / "out"
     out_dir.mkdir(exist_ok=True)
     
+    # Prepare filter lists for all PEs
+    cluster_cores = 8
+    trace_filter = [f"pe{core_id}/insn" for core_id in range(cluster_cores)]
+    
     print(f"\n=== L2 Size Comparison: {l2_size1} KB vs {l2_size2} KB ===\n")
     
     # First configuration
     print(f"\n--- Running with L2 size {l2_size1} KB ---")
     sim1 = PalloySimulator(
         workload_path=str(Path(__file__).parent.parent.parent / "pulp-sdk/tests/hello/"),
+        num_cluster_cores=cluster_cores,
         l2_size_kb=l2_size1,
-        l2_num_banks=8
+        l2_num_banks=8,
+        trace_filter=trace_filter,
+        debug=True
     )
     metrics1 = sim1.run_full_workflow()
     result_file1 = out_dir / f"results_l2_{l2_size1}kb.json"
@@ -39,8 +46,11 @@ def main():
     print(f"\n--- Running with L2 size {l2_size2} KB ---")
     sim2 = PalloySimulator(
         workload_path=str(Path(__file__).parent.parent.parent / "pulp-sdk/tests/hello/"),
+        num_cluster_cores=cluster_cores,
         l2_size_kb=l2_size2,
-        l2_num_banks=8
+        l2_num_banks=8,
+        trace_filter=trace_filter,
+        debug=True
     )
     metrics2 = sim2.run_full_workflow()
     result_file2 = out_dir / f"results_l2_{l2_size2}kb.json"
@@ -51,15 +61,15 @@ def main():
     print(f"{'Metric':<20} {l2_size1:>10} KB {l2_size2:>10} KB {'Ratio':>12}")
     print("-" * 60)
     
-    if metrics1.get('cycles') and metrics2.get('cycles'):
-        cycles1 = metrics1['cycles']
-        cycles2 = metrics2['cycles']
+    if metrics1.get('results', {}).get('cycle_delta') and metrics2.get('results', {}).get('cycle_delta'):
+        cycles1 = metrics1['results']['cycle_delta']
+        cycles2 = metrics2['results']['cycle_delta']
         ratio = cycles1 / cycles2 if cycles2 > 0 else 0
         print(f"{'Cycles':<20} {cycles1:>13} {cycles2:>13} {ratio:>12.2f}x")
     
-    if metrics1.get('timestamp_ps') and metrics2.get('timestamp_ps'):
-        time1 = metrics1['timestamp_ps']
-        time2 = metrics2['timestamp_ps']
+    if metrics1.get('results', {}).get('time_delta_ps') and metrics2.get('results', {}).get('time_delta_ps'):
+        time1 = metrics1['results']['time_delta_ps']
+        time2 = metrics2['results']['time_delta_ps']
         ratio = time1 / time2 if time2 > 0 else 0
         print(f"{'Time (ps)':<20} {time1:>13} {time2:>13} {ratio:>12.2f}x")
     

@@ -9,7 +9,7 @@ import subprocess
 import sys
 import re
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union, List
 import json
 
 # ANSI color codes
@@ -94,38 +94,40 @@ class PalloySimulator:
     """Main class for managing GVSoC simulations"""
     
     def __init__(self, 
-                 workload_path: Optional[str] = None,
                  config: str = "palloy.sh",
                  target: str = "palloy",
-                 venv_dir: str = "./.venv/",
-                 gvsoc_dir: str = "./gvcuck/",
-                 sdk_dir: str = "./pulp-sdk/",
-                 trace_file: str = "./traces.log",
-                 cluster_config_file: str = "./gvcuck/pulp/pulp/chips/pulp_open/cluster.new.json",
-                 soc_config_file: str = "./gvcuck/pulp/pulp/chips/pulp_open/soc.new.json",
+                 workload_path: Optional[str] = None,
                  num_cluster_cores: Optional[int] = None,
                  l1_size_kb: Optional[int] = None,
                  l2_size_kb: Optional[int] = None,
                  l2_num_banks: Optional[int] = None,
+                 venv_dir: str = "./.venv/",
+                 gvsoc_dir: str = "./gvcuck/",
+                 sdk_dir: str = "./pulp-sdk/",
+                 trace_file: str = "./traces.log",
+                 trace_filter: Union[str, List[str]] = "insn",
+                 cluster_config_file: str = "./gvcuck/pulp/pulp/chips/pulp_open/cluster.new.json",
+                 soc_config_file: str = "./gvcuck/pulp/pulp/chips/pulp_open/soc.new.json",
                  palloy_config_file: str = "palloy_config.json",
                  debug: bool = False):
         """
         Initialize the Palloy simulator
         
         Args:
-            workload_path: Path to the application directory (None = use from config)
             config: Configuration file name (in pulp-sdk/configs/)
             target: Target name for GVSoC build
-            venv_dir: Path to virtual environment
-            gvsoc_dir: Path to GVSoC directory
-            sdk_dir: Path to PULP SDK directory
-            trace_file: Path to trace output file
-            cluster_config_file: Path to cluster config JSON
-            soc_config_file: Path to SoC config JSON
+            workload_path: Path to the application directory (None = use from config)
             num_cluster_cores: Number of cluster cores to use (None = use from config)
             l1_size_kb: L1 memory size in KB (None = use from config)
             l2_size_kb: L2 memory size in KB (None = use from config)
             l2_num_banks: Number of L2 banks (None = use from config)
+            venv_dir: Path to virtual environment
+            gvsoc_dir: Path to GVSoC directory
+            sdk_dir: Path to PULP SDK directory
+            trace_file: Path to trace output file
+            trace_filter: Filter keyword(s) for traces. Can be a string or list of strings.
+            cluster_config_file: Path to cluster config JSON
+            soc_config_file: Path to SoC config JSON
             palloy_config_file: Path to palloy configuration file
             debug: Enable debug mode with streaming output (default: False)
         """
@@ -160,6 +162,7 @@ class PalloySimulator:
         self.config = config
         self.target = target
         self.debug = debug
+        self.trace_filter = trace_filter
         self.venv_dir = (script_dir / venv_dir).resolve()
         self.gvsoc_dir = (script_dir / gvsoc_dir).resolve()
         self.sdk_dir = (script_dir / sdk_dir).resolve()
@@ -428,11 +431,18 @@ class PalloySimulator:
         
         activate_script = self.venv_dir / "bin" / "activate"
         config_path = self.sdk_dir / "configs" / self.config
+        
+        # Build trace argument
+        if isinstance(self.trace_filter, list):
+            trace_args = ' '.join([f"--trace={f}:{self.trace_file}" for f in self.trace_filter])
+        else:
+            trace_args = f"--trace={self.trace_filter}:{self.trace_file}"
+
         cmd = (
             f"source {activate_script} && source {config_path} "
             f"&& make run -j$(nproc) "
-            f"runner_args='--trace=insn:{self.trace_file} --trace-level=DEBUG --debug-mode' "
-            f"CONFIG_NB_CLUSTER_PE={self.num_cluster_cores}"
+            f"runner_args='{trace_args} --trace-level=DEBUG --debug-mode' "
+            f"CONFIG_NB_CLUSTER_PE={self.num_cluster_cores} "
         )
         
         run_method = self._run_command_streaming if self.debug else self._run_command
@@ -455,55 +465,84 @@ class PalloySimulator:
         print(f"\n{Colors.BLUE}{Colors.BOLD}[4/4] EXTRACTING METRICS{Colors.RESET}")
         
         metrics = {
-            "num_cluster_cores": self.num_cluster_cores,
-            "workload": str(self.workload_path),
-            "cycles": None,
-            "timestamp_ps": None,
+            "info": {
+                "target": self.target,
+                "workload": str(self.workload_path),
+            },
+            "architecture": {
+                "cluster_cores": self.num_cluster_cores,
+                "l1_kb": self.l1_size_kb,
+                "l2_kb": self.l2_size_kb,
+                "l2_banks": self.l2_num_banks,
+            },
+            "results": {
+                "cycle_delta": None,
+                "time_delta_ps": None,
+                "trace_filter": self.trace_filter,
+            },
         }
-        
-        # Extract cycles from last line of trace file (format: "timestamp_ps: cycles: ...")
+
+        # Extract cycles from first and last trace lines only
+        #   format: "[timestamp_ps]: [cycles]: ..."
         if not self.trace_file.exists():
             print(f"{Colors.YELLOW}⚠ Trace file not found: {self.trace_file}{Colors.RESET}")
         else:
             try:
+                def _parse_trace_line(line: str):
+                    match = re.match(r'^(\d+):\s*(\d+):', line.strip())
+                    if match:
+                        return int(match.group(1)), int(match.group(2))
+                    return None
+
+                # Read first non-empty line
+                first_line = None
+                with open(self.trace_file, 'r', errors='ignore') as f:
+                    for line in f:
+                        if line.strip():
+                            first_line = line.strip()
+                            break
+
+                # Read last non-empty line
+                last_line = None
                 with open(self.trace_file, 'rb') as f:
                     f.seek(0, 2)
                     file_size = f.tell()
-                    
+
                     if file_size == 0:
                         print(f"{Colors.YELLOW}⚠ Trace file is empty{Colors.RESET}")
                     else:
-                        # Read last portion of file to extract the last line
                         buffer_size = min(8192, file_size)
                         f.seek(max(0, file_size - buffer_size))
                         buffer = f.read().decode('utf-8', errors='ignore')
                         lines = buffer.splitlines()
-                        
-                        # Find last non-empty line
                         last_line = next((line for line in reversed(lines) if line.strip()), None)
-                        
-                        if not last_line:
-                            print(f"{Colors.YELLOW}⚠ No valid content in trace file{Colors.RESET}")
-                        else:
-                            # Parse timestamp and cycles from line
-                            match = re.match(r'^(\d+):\s*(\d+):', last_line)
-                            if match:
-                                metrics["timestamp_ps"] = int(match.group(1))
-                                metrics["cycles"] = int(match.group(2))
-                                print(f"{Colors.GREEN}✓ Parsed from trace: timestamp={metrics['timestamp_ps']} ps, cycles={metrics['cycles']}{Colors.RESET}")
-                            else:
-                                print(f"{Colors.YELLOW}⚠ Could not parse last line: {last_line[:100]}{Colors.RESET}")
-                                
+
+                first_parsed = _parse_trace_line(first_line) if first_line else None
+                last_parsed = _parse_trace_line(last_line) if last_line else None
+
+                # Subtract to get deltas
+                if first_parsed and last_parsed:
+                    metrics["results"]["time_delta_ps"] = last_parsed[0] - first_parsed[0]
+                    metrics["results"]["cycle_delta"] = last_parsed[1] - first_parsed[1]
+                    print(
+                        f"{Colors.GREEN}✓ Parsed from trace (delta): time={metrics['results']['time_delta_ps']} ps, "
+                        f"cycles={metrics['results']['cycle_delta']}{Colors.RESET}"
+                    )
+                elif last_parsed:
+                    metrics["results"]["time_delta_ps"] = last_parsed[0]
+                    metrics["results"]["cycle_delta"] = last_parsed[1]
+                    print(f"{Colors.YELLOW}⚠ First trace line missing; using absolute values from last line{Colors.RESET}")
+                else:
+                    print(f"{Colors.YELLOW}⚠ Could not parse trace lines{Colors.RESET}")
+
             except Exception as e:
                 print(f"{Colors.YELLOW}⚠ Could not read trace file: {e}{Colors.RESET}")
         
         self.last_results = metrics
         
-        print(f"\nExtracted Metrics:")
-        print(f"  Workload: {metrics['workload']}")
-        print(f"  Cluster Cores: {metrics['num_cluster_cores']}")
-        print(f"  Cycles: {metrics['cycles']}")
-        print(f"  Timestamp (ps): {metrics['timestamp_ps']}")
+        print(f"\nExtracted Results:")
+        print(f"  Cycle delta: {metrics['results']['cycle_delta']:,}")
+        print(f"  Time delta (ps): {metrics['results']['time_delta_ps']:,}")
         
         return metrics
     

@@ -101,11 +101,13 @@ python3 palloy.py
 ### Parameters
 
 **Main Parameters:**
+- `workload_path`: Path to application (default: "./pulp-sdk/tests/hello/")
 - `num_cluster_cores`: Number of cluster cores (default: 8)
 - `l1_size_kb`: L1 cache size in KB (default: 64)
 - `l2_size_kb`: L2 memory size in KB (default: 1600)
 - `l2_num_banks`: Number of L2 memory banks (default: 4)
-- `workload_path`: Path to application (default: "./pulp-sdk/tests/hello/")
+- `debug`: Enable debug output streaming (default: False)
+- `trace_filter`: Filter for trace output (default: instructions only)
 
 **Build & Environment:**
 - `config`: Config file name (default: "palloy.sh")
@@ -113,13 +115,12 @@ python3 palloy.py
 - `venv_dir`: Virtual environment path (default: "./.venv/")
 - `gvsoc_dir`: GVSoC directory (default: "./gvcuck/")
 - `sdk_dir`: PULP SDK directory (default: "./pulp-sdk/")
-- `debug`: Enable debug output streaming (default: False)
 
 **Configuration Files:**
+- `trace_file`: Trace output path (default: "./traces.log")
 - `palloy_config_file`: Config file path (default: "palloy_config.json")
 - `cluster_config_file`: Cluster config output
 - `soc_config_file`: SoC config output  
-- `trace_file`: Trace output path (default: "./traces.log")
 
 ### Programmatic Configuration
 
@@ -210,6 +211,27 @@ Enable `debug=True` to stream all command outputs in real-time:
 sim = PalloySimulator(debug=True)
 metrics = sim.run_full_workflow()
 ```
+
+### Trace Filtering
+
+Specify `trace_filter` to limit trace output to specific components or type of traces. For example, to capture instruction traces only:
+
+```python
+sim = PalloySimulator(trace_filter="insn")
+metrics = sim.run_full_workflow()
+```
+
+`trace_filter` can also be a list of filters. For example, to only capture instruction traces from all cluster cores:
+
+```python
+cluster_cores = 8
+trace_filter = [f"pe{core_id}/insn" for core_id in range(cluster_cores)]
+
+sim = PalloySimulator(num_cluster_cores=cluster_cores, trace_filter=trace_filter)
+metrics = sim.run_full_workflow()
+```
+
+This can be useful to focus on the performance of specific components in the architecture, since the metrics extraction will only consider the deltas in the filtered traces. For more details on GVSoC traces, see the [GVSoC documentation](https://gvsoc.readthedocs.io/en/latest/system_traces.html).
 
 ### More Examples
 

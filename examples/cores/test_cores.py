@@ -22,6 +22,10 @@ def main():
     out_dir = Path(__file__).parent / "out"
     out_dir.mkdir(exist_ok=True)
     
+    # Prepare filter lists for all PEs
+    trace_filter1 = [f"pe{core_id}/insn" for core_id in range(cores1)]
+    trace_filter2 = [f"pe{core_id}/insn" for core_id in range(cores2)]
+    
     print(f"\n=== Simple Core Comparison: {cores1} cores vs {cores2} cores ===\n")
     
     # First configuration
@@ -29,7 +33,8 @@ def main():
     sim1 = PalloySimulator(
         workload_path=str(Path(__file__).parent.parent.parent / "pulp-sdk/applications/MobileNetV1/"),
         num_cluster_cores=cores1,
-        debug=True
+        debug=True,
+        trace_filter=trace_filter1
     )
     metrics1 = sim1.run_full_workflow()
     result_file1 = out_dir / f"results_{cores1}cores.json"
@@ -40,7 +45,8 @@ def main():
     sim2 = PalloySimulator(
         workload_path=str(Path(__file__).parent.parent.parent / "pulp-sdk/applications/MobileNetV1/"),
         num_cluster_cores=cores2,
-        debug=True
+        debug=True,
+        trace_filter=trace_filter2
     )
     metrics2 = sim2.run_full_workflow()
     result_file2 = out_dir / f"results_{cores2}cores.json"
@@ -51,15 +57,15 @@ def main():
     print(f"{'Metric':<20} {cores1:>12} cores {cores2:>12} cores {'Speedup':>12}")
     print("-" * 72)
     
-    if metrics1.get('cycles') and metrics2.get('cycles'):
-        cycles1 = metrics1['cycles']
-        cycles2 = metrics2['cycles']
+    if metrics1.get('results', {}).get('cycle_delta') and metrics2.get('results', {}).get('cycle_delta'):
+        cycles1 = metrics1['results']['cycle_delta']
+        cycles2 = metrics2['results']['cycle_delta']
         speedup = cycles1 / cycles2 if cycles2 > 0 else 0
         print(f"{'Cycles':<20} {cycles1:>16} {cycles2:>16} {speedup:>12.2f}x")
     
-    if metrics1.get('timestamp_ps') and metrics2.get('timestamp_ps'):
-        time1 = metrics1['timestamp_ps']
-        time2 = metrics2['timestamp_ps']
+    if metrics1.get('results', {}).get('time_delta_ps') and metrics2.get('results', {}).get('time_delta_ps'):
+        time1 = metrics1['results']['time_delta_ps']
+        time2 = metrics2['results']['time_delta_ps']
         speedup = time1 / time2 if time2 > 0 else 0
         print(f"{'Time (ps)':<20} {time1:>16} {time2:>16} {speedup:>12.2f}x")
     
