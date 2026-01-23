@@ -4,3 +4,6 @@
 [submodule "pulp-sdk"]
 	path = pulp-sdk
 	url = https://github.com/eml-eda/pulp-sdk.git
+[submodule "match"]
+	path = match
+	url = https://github.com/eml-eda/match.git
